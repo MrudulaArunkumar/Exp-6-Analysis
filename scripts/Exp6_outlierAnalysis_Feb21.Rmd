@@ -1,0 +1,741 @@
+---
+title: "Exp6_selectiveAnalysis_Feb2021"
+author: "Mrudula"
+date: "`r format(Sys.time(), '%d %B,%Y')`"
+output: html_document
+---
+
+# Memo for Exp6 Analysis with only outliers meant for the Kolloquium Talk on 10th Feb 2021
+
+This memo entails the results and analysis after choosing one criteria for exclusion --> outliers and analysing and interpreting results with this criteria alone. This memo involves the following results
+
+    * Validity Main effect with learn trials
+    * Saliency Manipulation check with the selected manipulation trials
+    * Interaction between  Validity and Saliency for test trials
+    * Block analysis
+    * Overshadowing in binding trials
+    * Including ResponseType as a factor
+    * Exploratory Analysis with awareness
+    
+Loading the libraries
+
+Loading the relevant libraries and the dataset
+
+```{r loadlibs, include=FALSE, message=FALSE}
+
+library(tidyverse)
+library(plyr)
+library(ez)
+library(schoRsch)
+library(knitr)
+library(pander)
+library(rmarkdown)
+library(reshape2)
+library(here)
+library(ggpubr)
+library(lme4)
+library(nlme)
+
+#set_here()
+
+Exp6data <- read.csv(here("Data", "Exp6_fulldataset.csv"))
+Exp6data$participant <- as.factor(Exp6data$participant)
+
+```
+
+
+### Data preparation and cleaning
+
+  * Removing unnecessary columns
+  * Preparing the RT trial 
+  * Creating a column for Accuracy and Error Rate
+
+```{r cleaning, include=FALSE, message=FALSE}
+#removing unnecessary columns
+Exp6data <- Exp6data %>%
+  select(-X,-ConsentKey.keys,-ConsentKey.rt,-Begin.keys,-Begin.rt,-checkresp.corr,-checkresp.keys,-checkresp.rt,-Attention.thisRepN,-Attention.thisTrialN,-Attention.thisN,-Attention.thisIndex,-Attention.ran,-AttnQuestion,-AttnAnswer,-NextStep.keys,-NextStep.rt,-InstRep.ran,-InstRep.thisN,-InstRep.thisTrialN,-InstRep.thisRepN,-InstRep.thisIndex,-PracProceed.keys,-PracProceed.rt,-Prac_loop.thisRepN,-Prac_loop.thisTrialN,-Prac_loop.thisN,-Prac_loop.thisIndex,-Prac_loop.ran,-Exp_proceed.keys,-Exp_proceed.rt,-PracRepeat.ran,-PracRepeat.thisRepN,-PracRepeat.thisN,-PracRepeat.thisIndex,-PracRepeat.thisTrialN,-brkContinue.keys,-PauseResp.keys,-PauseResp.rt,-CAtrials.thisRepN,-CAtrials.ran,-CAtrials.thisTrialN,-CAtrials.thisIndex, -CA_Proceed.keys,-CA_Proceed.rt,-headstartLearn.thisRepN,-headstartLearn.thisTrialN,-headstartLearn.thisIndex,-headstartLearn.thisN,-headstartLearn.ran,-ExpTrials.ran,-ExpTrials.thisIndex,-CA_trials.thisRepN,-CA_trials.thisN,-CA_trials.thisIndex,-CA_trials.thisTrialN,-CA_trials.ran,-AwareQ_loop.thisRepN,-AwareQ_loop.ran,-AwareQ_loop.thisIndex,-AwareQ_loop.thisTrialN,-todebrief.keys,-Finalend.keys)
+
+
+Exp6data <- Exp6data%>%group_by(participant)%>%fill(Screen_bg,.direction = "down")
+
+Exp6data <- Exp6data %>%
+  mutate(BlockCount = ifelse(ExpTrials.thisN <= 93, 1,
+                             ifelse(ExpTrials.thisN <=187 & ExpTrials.thisN > 93,2,
+                                    ifelse(ExpTrials.thisN <= 271 & ExpTrials.thisN > 187,3,
+                                           ifelse(ExpTrials.thisN <= 375 & ExpTrials.thisN > 271,4,NA)))))
+
+Exp6data$BlockCount <- as.factor(Exp6data$BlockCount)
+
+#adjusting RT
+Exp6data <- separate(Exp6data, col = TargetResp.rt, into = c("RT_Trials", "RT_secondary"), sep = ',')
+Exp6data$RT_Trials <- Exp6data$RT_Trials%>%
+  str_replace_all("\\[|\\]","")%>%
+  as.double(Exp6data$RT_Trials)
+Exp6data$RT_Trials <- 1000*(Exp6data$RT_Trials)
+
+###creating a separate df with the contingency awareness
+Exp6_CA <- Exp6data%>%
+ filter(Block == "ContingencyCheck" | str_detect(AwareQ, "Press"))
+Exp6data <- Exp6data%>%drop_na(RT_Trials)
+
+Exp6data$ACC_trials <- Exp6data$TargetResp.corr
+Exp6data$ErrorRate <- 1 - Exp6data$ACC_trials
+
+##exploratory removing participants with average performance
+`%notin%` <- Negate(`%in%`)
+
+
+
+
+```
+
+
+### Descriptives
+
+Summary of the overall Reaction Time, accuracy and Error Rate
+
+```{r descriptives, echo=FALSE}
+pander(summary(Exp6data$RT_Trials), style = 'rmarkdown',caption = 'Mean RT')
+pander(table(Exp6data$ACC_trials),style = 'rmarkdown',caption = "Accuracy")
+
+pander(round(table(Exp6data$ACC_trials)/nrow(Exp6data)*100, digits = 3), style = 'rmarkdown', caption = "Percentage of errors")
+
+
+```
+
+Removing the outliers and farouts
+    * Outliers are identified excluded if they are 3x more than the third quartile
+    * Farouts are identified excluded if they are 1.5x more than the third quartile
+    * RTs less than 300ms
+
+```{r exclusions, echo=FALSE}
+Exp6data$RT_Trials[Exp6data$ACC_trials==0] <- NA
+
+
+#creating function to remove the outliers and farouts
+computeTukeys <- function(x){
+  P25 <- quantile(x$RT_Trials, .25, na.rm = TRUE, type = 6) #type = 6 -> used in SPSS
+  P75 <- quantile(x$RT_Trials, .75, na.rm = TRUE, type = 6)
+  x$Outlier <- P75 + 1.5*(P75 - P25)
+  x$Farouts <- P75 + 3.0*(P75 - P25)
+  return(x)
+}
+
+
+#identifying the outliers and farouts at individual level
+Exp6data <- ddply(Exp6data, .(participant), computeTukeys)
+
+#creating new column with RT trials after removing outliers/farouts
+Exp6data$RT_ifo <- Exp6data$RT_Trials
+Exp6data$RT_io <- Exp6data$RT_Trials
+sum(is.na(Exp6data$RT_Trials))
+Exp6data$RT_ifo[Exp6data$RT_ifo > Exp6data$Farouts|Exp6data$RT_ifo < 150] <- NA
+sum(is.na(Exp6data$RT_ifo))
+Exp6data$RT_io[Exp6data$RT_io > Exp6data$Outlier|Exp6data$RT_io < 300] <- NA
+
+
+pander(summary(Exp6data$RT_io), style = 'rmarkdown', caption = "Summary of RT after removing Outliers")
+
+```
+
+
+## ANALYSES
+
+### 1. Validity Manipulation check - Learn trials
+
+Valid trials are significantly faster than invalid trials with a mean difference of 17ms for outliers.
+
+```{r valcheck, echo=FALSE,message=FALSE}
+##creating a data set with just learn trials
+Exp6learn_agg <- aggregate(data = Exp6data, RT_io~participant+Validity,mean)
+
+#for outliers
+pander(aggregate(data = Exp6learn_agg, RT_io~Validity,mean), style = "rmarkdown", caption = "Table containing means of valid and invalid learn trials, outliers excluded")
+
+
+pander((t.test(data = Exp6learn_agg, RT_io~Validity,paired = TRUE)), style = 'rmarkdown', caption = "t test showing differences between valid and invalid trials-excluding outliers")
+
+vallearnplot <- ggplot(data = Exp6learn_agg, aes(x = factor(Validity, level = c("valid", "invalid")), y = RT_io, group = Validity))+
+  geom_line(aes(group = 1), stat = "summary", fun = "mean", color = "deepskyblue4", size = 1)+
+  geom_point(stat = "summary", fun = "mean", color = "deepskyblue4")+theme_classic()+coord_cartesian(ylim = c(500,600))+ylab("ReactionTime")+xlab("Validity")
+ggsave(filename = here("Figures","valearneffect.png"), vallearnplot)
+```
+
+### 2. Saliency Manipulation Check 
+
+There is a significant difference between trials where the  target appeared at the position of the salient letter vs target at the position of the non salient : Salient position is 23ms faster
+
+```{r}
+Exp6SalCheck_o <- aggregate(data = Exp6data, RT_io~participant+Saliency, subset = (Block == "SalMC"), mean)
+
+pander(t.test(RT_io~Saliency, data = Exp6SalCheck_o,paired=TRUE),style = "rmarkdown", caption = "t test result for saliency manipulation, outliers")
+
+sallearnplot <- ggplot(data = Exp6SalCheck_o, aes(x = factor(Saliency, level = c("Salient", "NonSalient")), y = RT_io, group = Saliency))+
+  geom_line(aes(group = 1), stat = "summary", fun = "mean", color = "deepskyblue4", size = 1)+coord_cartesian(ylim = c(600,700))+
+  geom_point(stat = "summary", fun = "mean", color = "deepskyblue4")+theme_classic()+ylab("ReactionTime")+xlab("Saliency")
+ggsave(filename = here("Figures","salearneffect.png"), sallearnplot)
+```
+
+### 3. Interaction of Validity x Saliency in test trials
+
+This analysis is the main one concerning overshadowing. 
+
+Outliers:
+     The validity effect is very strong (p <.001) with F value = 12.35.The interaction is again not significant and like the farouts analysis the plot seems to look promising- salient trials have a validity effect of 13.6ms whereas non salient trials have an effect of 9.3ms. 
+     
+
+```{r interactiono, echo=FALSE, warning=FALSE, message=FALSE}
+##for outliers
+Exp6agg_o <- aggregate(data = Exp6data, RT_io~participant+Validity+Saliency, subset = (Condition == "test"), mean)
+
+
+anova_VS_o <- ezANOVA(data = Exp6agg_o,
+                       dv = RT_io,
+                       wid = participant,
+                       within = .(Validity, Saliency),
+                       detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_VS_o, style = "rmarkdown", caption = "ANOVA for test trials(w/o outliers) with Validity and Saliency as factors",split.table = Inf, missing = NA)
+anova_out(anova_VS_o)
+
+# ezPlot(data = Exp6agg_o,
+#         dv = RT_io,
+#         wid = participant,
+#         within = .(Validity, Saliency),
+#        split = Validity, x = Saliency, do_bars = FALSE)+theme_classic()+ylim(500,600)+ggtitle("interaction effect between saliency and validity for test trials without outliers")
+
+stdInteraction_o <- ggplot(Exp6agg_o, aes(x=Saliency, y=RT_io,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+coord_cartesian(ylim = c(500,600))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency")
+
+stdInteraction_o
+ggsave(filename = here("Figures","interaction_o.png"),stdInteraction_o,width = 6,height = 4)
+
+  mean_valEffect_o <- ezStats(data = Exp6agg_o,
+        dv = RT_io,
+        wid = participant,
+        within_full = .(Saliency,Validity),
+        within = .(Saliency),
+        diff=.(Validity),
+        reverse_diff = TRUE)
+
+pander(mean_valEffect_o, style = "rmarkdown", title = "Validity effect(invalid-valid) for salient and non salient test trials(outliers)")
+```
+
+While comparing the validity effect for each type of saliency we find that it is significant for both the salient trials as well as the non salient trials
+
+
+```{r effect, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+pander(t.test(data = Exp6agg_o, RT_io~Validity, subset = (Saliency == "Salient"), paired = TRUE), style = "rmarkdown", caption = "t test for validity effect for salient trials")
+
+pander(t.test(data = Exp6agg_o, RT_io~Validity, subset = (Saliency == "NonSalient"), paired = TRUE), style = "rmarkdown", caption = "t test for validity effect for salient trials")
+
+Valeffectplot <- ggplot(mean_valEffect_o, aes(x=Saliency, y=Mean,fill = Saliency))+
+    geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("cadetblue3","deepskyblue4"))+coord_cartesian(ylim = c(0,15))+
+  theme_classic()+ylab("Validity effect (invalid - valid trials) in ms")+ggtitle("Difference between invalid and valid trials")
+Valeffectplot
+ggsave(filename = here("Figures","Valeffectplot_o.png"),Valeffectplot,width = 6, height = 4)
+```
+
+### 4. Error Rate
+
+The Error Rate analysis shows the exact expected trend where the difference in error rate is highest when the trials are salient letters compared to when they are non salient. Both the main effects of Validity and Saliency are significant and the interaction is also significant. 
+
+Maybe this could throw more light on expected associations and quick responses leading to errors - can it be concluded that learning and overshadowing was successful based on error rates??
+
+```{r Errorate, echo=FALSE, message=FALSE, warning=FALSE}
+
+Exp6agg_ER <- aggregate(data = Exp6data,ErrorRate~participant+Validity+Saliency,subset = (Condition == "test"),mean)
+
+
+
+anova_t_ER <- ezANOVA(data = Exp6agg_ER,
+        dv = ErrorRate,
+        wid = participant,
+        within = .(Saliency,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_ER, style = 'rmarkdown', caption = "ANOVA results: ErrorRates in test trials", split.table = "Inf", missing = NA)
+anova_out(anova_t_ER)
+# ezPlot(data = Exp6agg_ER,
+#         dv = ErrorRate,
+#         wid = participant,
+#         within = .(Saliency,Validity),
+#        split = Validity, x = Saliency, do_bars = FALSE)+theme_classic()+ylim(0,0.15)+
+#   ggtitle("Error rate among test trials")
+
+
+errorrateplot <-  ggplot(Exp6agg_ER, aes(x=Saliency, y=ErrorRate,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(0,0.15))+
+  theme_classic()+ylab("Error Rate")+ggtitle("Interaction of Validity and Saliency with ErrorRate as DV")
+errorrateplot
+ggsave(filename = here("Figures","ErrorRate.png"),errorrateplot,width=6,height = 4)
+```
+
+
+### 5. Inverse Efficiency scores
+
+Given the trends seen in RTs and Error Rate, the inverse Efficiency score was computed and used as a dependant variable. IES = RT/(1 - ErrorRate)
+
+```{r ies, echo=FALSE, warning=FALSE, message=FALSE}
+## create a df that contains both Errorrate and RT
+
+Exp6test <- Exp6data %>%
+  subset(Condition == "test")
+
+###FOR OUTLIERS
+
+Exp6agg_IES_o <- aggregate(Exp6test[,c("RT_io","ErrorRate")], by = list(participant = Exp6test$participant,
+                                                                       Validity = Exp6test$Validity,
+                                                                       Saliency = Exp6test$Saliency), mean,na.rm = TRUE)
+
+Exp6agg_IES_o$IES <- Exp6agg_IES_o$RT_io/(1-Exp6agg_IES_o$ErrorRate)
+
+anova_t_IES_o <- ezANOVA(data = Exp6agg_IES_o,
+        dv = IES,
+        wid = participant,
+        within = .(Saliency,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_IES_o, style = 'rmarkdown', caption = "ANOVA results: using IES(outliers)", split.table = "Inf", missing = NA)
+anova_out(anova_t_IES_o)
+# ezPlot(data = Exp6agg_IES_o,
+#         dv = IES,
+#         wid = participant,
+#         within = .(Saliency,Validity),
+#        split = Validity, x = Saliency, do_bars = FALSE)+theme_classic()+
+#   ggtitle("Interaction effect with IES plotted on the y axis")
+
+IESinterplot_o <- ggplot(Exp6agg_IES_o, aes(x=Saliency, y=IES,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(550,650))+
+  theme_classic()+ylab("IES (in ms)")+ggtitle("Interaction of Validity and Saliency")
+IESinterplot_o
+ggsave(filename = here("Figures","IESinterplot_o.png"),IESinterplot_o)
+
+meanIES_o <- ezStats(data = Exp6agg_IES_o,
+        dv = IES,
+        wid = participant,
+        within_full = .(Saliency,Validity),
+        within = .(Saliency),
+        diff = .(Validity),
+        reverse_diff = TRUE)
+
+pander(meanIES_o, style = "rmarkdown", caption = "Mean IES score validity effect")
+
+valeffectIES_o <- ggplot(data = meanIES_o, aes(x = Saliency, y = Mean, fill = Saliency))+scale_fill_manual(values = c("cadetblue3","deepskyblue4"))+
+  geom_bar(stat = "identity")+
+  theme_classic()+
+  ylab("Validity Effect(invalid-valid trials) in ms")+theme(legend.title = element_blank())+
+  ggtitle("Validity Effect (invalid - valid) across test trials (IES) averaged across participant")
+valeffectIES_o
+ggsave(filename = here("Figures","valEffectwithIES_o.png"),valeffectIES_o)
+```
+
+Are these validity effects significant?
+
+For the salient trials it is highly significant and for the non salient trials it is almost significant.
+
+```{r ieseffect, echo=FALSE}
+
+pander(t.test(data = Exp6agg_IES_o, IES~Validity, subset = (Saliency == "Salient"), paired = TRUE), style = "rmarkdown", caption = "Outlier:t. test result of validity effect for salient trials")
+
+pander(t.test(data = Exp6agg_IES_o, IES~Validity, subset = (Saliency == "NonSalient"), paired = TRUE), style = "rmarkdown", caption = "OUtlier:t. test result of validity effect for nonsalient trials")
+```
+### 6. Block Analysis
+
+The experimental trials were split into 4 blocks, further joined to have two main blocks and the data was analysed to check if the interaction differed across block.
+This blockcount does not include the headstart learn trials
+
+    **It shows that the effect is stronger in the first block. Although the statistics are not significant the trend looks like the effect is larger in block 1 compared to block 2. This can also be due to the fact  that the first block is preceded by the headstart learn trials.**
+    
+
+```{r block, echo=FALSE, message=FALSE, warning=FALSE}
+Exp6agg_B <- aggregate(data = Exp6data, RT_io~participant+Validity+Saliency+BlockCount, subset = (Condition == "test"), mean)
+
+Exp6agg_B <- Exp6agg_B %>%
+  mutate(BlockMain = ifelse(BlockCount == "1" | BlockCount == "2",1,2))
+Exp6agg_B$BlockMain <- as.factor(Exp6agg_B$BlockMain)
+Exp6agg_B1 <- Exp6agg_B %>% subset(BlockMain == 1)
+Exp6agg_B2 <-  Exp6agg_B %>% subset(BlockMain == 2)
+
+
+anova_t_block1 <- ezANOVA(data = Exp6agg_B1,
+        dv = RT_io,
+        wid = participant,
+        within = .(Saliency,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_block1, style = 'rmarkdown', caption = "ANOVA results: using IES(outliers)", split.table = "Inf", missing = NA)
+
+block1 <- ggplot(Exp6agg_B1, aes(x=Saliency, y=RT_io,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(500,600))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency for trials from block1")
+block1
+
+#removing some participants due to unbalanced data
+Exp6agg_B2 <- Exp6agg_B2 %>%
+  filter(participant %notin% c(4,23,33,50,51,22))
+
+anova_t_block2 <- ezANOVA(data = Exp6agg_B2,
+        dv = RT_io,
+        wid = participant,
+        within = .(Saliency,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_block2, style = 'rmarkdown', caption = "ANOVA results: using IES(outliers)", split.table = "Inf", missing = NA)
+
+block2 <- ggplot(Exp6agg_B2, aes(x=Saliency, y=RT_io,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(500,600))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency for trials from block2")
+block2
+
+```
+
+### Stimulus Response Binding Analysis
+### 1. Overshadowing in the binding trials
+
+First a variable is coded that looks at the SR pairs of learn-test trial where the test trial can either be a salient or a non salient letter. This variable is called the "OvershadowSRB" where 1 refers to Salient and 2 refers to non salient
+
+```{r overSRB, echo=FALSE, message=FALSE, warning=FALSE}
+Exp6data$OvershadowSRB <- NA
+Exp6data <- Exp6data%>%select(OvershadowSRB, Condition,SalD, NSalD, Validity, Saliency,CorrectAnswer,ACC_trials,RT_io, everything())
+Exp6data <- Exp6data %>%
+  mutate(OvershadowSRB = ifelse((Condition == "test" & lag(Condition,1) == "learn") &
+           lag(SalD,1)== SalD & lag(participant,1)==participant & lag(ACC_trials,1)== 1, 1,OvershadowSRB))
+
+Exp6data <- Exp6data %>%
+  mutate(OvershadowSRB = ifelse((Condition == "test" & lag(Condition,1) == "learn") &
+           lag(NSalD,1)== NSalD & lag(participant,1)==participant & lag(ACC_trials,1)== 1 & is.na(OvershadowSRB) == TRUE,2,OvershadowSRB))
+
+##including third category to check if there is a difference when neither repeats
+# Exp6data <- Exp6data %>%
+#   mutate(OvershadowSRB = ifelse((Condition == "test" & lag(Condition,1) == "learn") &
+#            lag(participant,1)==participant & lag(ACC_trials,1)== 1 & is.na(OvershadowSRB) == TRUE,3,OvershadowSRB))
+           
+Exp6data$OvershadowSRB[Exp6data$OvershadowSRB == 1] <- "Salient"
+Exp6data$OvershadowSRB[Exp6data$OvershadowSRB == 2] <- "NonSalient"
+
+```
+
+#### Previous Response
+
+Coding what the previous Response was, whether it was the same or different
+
+```{r prevresp, echo=FALSE, message=FALSE, warning=FALSE}
+Exp6data$ResponseType <- NA
+
+Rmlag <- 1:30
+for(k in Rmlag){
+Exp6data <- Exp6data %>% 
+  mutate(ResponseType = ifelse((lag(Condition,k)=="learn" | lag(Condition,k)=="test") &          (lag(SalD,k)==SalD|lag(NSalD,k)==NSalD) & lag(participant,k)==participant & lag(CorrectAnswer,k)== CorrectAnswer & is.na(ResponseType)==TRUE, "RR", ifelse((lag(Condition,k)=="learn"|lag(Condition,k)=="test") & (lag(SalD,k)==SalD|lag(NSalD,k)==NSalD)& lag(participant,k)==participant & lag(CorrectAnswer,k)!= CorrectAnswer & is.na(ResponseType)==TRUE, "RC", ResponseType)))
+}
+
+pander(table(Exp6data$ResponseType),style = 'rmarkdown', caption = "Total number of RRs and RCs")
+
+Exp6data <- Exp6data%>%select(ResponseType,CorrectAnswer, everything())
+
+##creating a dataframe that has only Binding trials preceding with learn 
+Exp6_OverSRB <- Exp6data %>%
+  subset(OvershadowSRB %in% c('Salient','NonSalient'))
+
+
+table(Exp6_OverSRB$OvershadowSRB)
+```
+
+
+### ANOVA: Interaction between Response Type and OVershadowSRB, similar to Validity x Saliency but now in the binding level.
+
+#### 1. Reaction time as dv
+
+```{r anova1, echo=FALSE, message=FALSE, warning=FALSE}
+Exp6overSRB_Agg <- aggregate(Exp6_OverSRB[,c("RT_io","ErrorRate")], by = list(participant=Exp6_OverSRB$participant,                                               OvershadowSRB = Exp6_OverSRB$OvershadowSRB,
+ResponseType = Exp6_OverSRB$ResponseType,
+Validity = Exp6_OverSRB$Validity), mean, na.rm = TRUE)
+sum(is.na(Exp6overSRB_Agg$RT_io))
+na.omit(Exp6overSRB_Agg)
+table(Exp6_OverSRB$participant)
+Exp6overSRB_Agg$OvershadowSRB <- as.factor(Exp6overSRB_Agg$OvershadowSRB)
+Exp6overSRB_Agg$ResponseType <- as.factor(Exp6overSRB_Agg$ResponseType)
+Exp6overSRB_Agg$IES <- Exp6overSRB_Agg$RT_io/(1-Exp6overSRB_Agg$ErrorRate)
+
+#using aov
+aov_SRB_o <- aov(RT_io~(Validity*OvershadowSRB*ResponseType)+Error(participant/(Validity*OvershadowSRB*ResponseType)), data = Exp6overSRB_Agg)
+summary(aov_SRB_o)
+
+Exp6overSRB_Agg_tv <- Exp6overSRB_Agg %>%
+  filter(Validity == "valid")
+Exp6overSRB_Agg_tiv <- Exp6overSRB_Agg %>%
+  filter(Validity == "invalid")
+
+#ezANOVA does not work and only works when responseType is removed from the aggregate df 
+anova_t_SRB<- ezANOVA(data = Exp6overSRB_Agg,
+        dv = RT_io,
+        wid = participant,
+        within = .(OvershadowSRB,ResponseType),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_SRB, style = 'rmarkdown', caption = "ANOVA results: using IES", split.table = "Inf", missing = NA)
+anova_out(anova_t_SRB)
+
+
+
+
+srbinter <- ggplot(Exp6overSRB_Agg, aes(x=OvershadowSRB, y=RT_io,color = ResponseType))+
+    geom_line(aes(group = ResponseType, linetype = ResponseType),size = 1,stat = "summary", fun = "mean")+
+    geom_point(stat = "summary", fun = "mean", aes(shape = ResponseType))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(500,600))+facet_grid(.~Validity)+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency for binding trials")
+srbinter
+ggsave(filename = here("Figures","srbinter_ValXRespType.png"), srbinter)
+
+srbinterswap <- ggplot(Exp6overSRB_Agg_tv, aes(x=ResponseType, y=RT_io,color = OvershadowSRB))+
+    geom_line(aes(group = OvershadowSRB, linetype = OvershadowSRB),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = OvershadowSRB))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(500,600))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency for binding trials")
+srbinterswap
+ggsave(filename = here("Figures","srbinterswapaxis.png"), srbinterswap)
+
+
+#withoutRespType
+Exp6overSRBVS_Agg <- aggregate(Exp6_OverSRB[,c("RT_io","ErrorRate")], by = list(participant=Exp6_OverSRB$participant,                                               OvershadowSRB = Exp6_OverSRB$OvershadowSRB,
+
+Validity = Exp6_OverSRB$Validity), mean, na.rm = TRUE)
+
+anova_t_SRBVS<- ezANOVA(data = Exp6overSRBVS_Agg,
+        dv = RT_io,
+        wid = participant,
+        within = .(OvershadowSRB,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_SRBVS, style = 'rmarkdown', caption = "ANOVA results: using IES", split.table = "Inf", missing = NA)
+anova_out(anova_t_SRBVS)
+
+srbVSinter <- ggplot(Exp6overSRBVS_Agg, aes(x=OvershadowSRB, y=RT_io,color = Validity))+
+    geom_line(aes(group = Validity, linetype =
+                    Validity),size = 1,stat = "summary", fun = "mean")+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(500,600))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency for binding trials")
+srbVSinter
+ggsave(filename = here("Figures","srbVSinter_noRespType.png"), srbVSinter)
+
+
+```
+
+While checking for the significance of the effect in each saliency condition we found that both were no highly significant
+
+```{r anova2, echo=FALSE, message=FALSE, warning=FALSE}
+pander(t.test(data =Exp6overSRB_Agg, RT_io~ResponseType, subset = (OvershadowSRB == 1),paired = TRUE), style = "rmarkdown", caption = "T test for Binding effect for salient trials")
+
+pander(t.test(data =Exp6overSRB_Agg, RT_io~ResponseType, subset = (OvershadowSRB == 2),paired = TRUE), style = "rmarkdown", caption = "T test for binding effect for non salient trials")
+```
+
+
+#### 2. Error Rate as DV
+
+```{r anova3, echo=FALSE, warning=FALSE, message=FALSE}
+
+anova_ER_SRB<- ezANOVA(data = Exp6overSRB_Agg,
+        dv = ErrorRate,
+        wid = participant,
+        within = .(ResponseType,OvershadowSRB),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_ER_SRB, style = 'rmarkdown', caption = "ANOVA results: using ErrorRate", split.table = "Inf", missing = NA)
+
+
+# srber <- ggplot(Exp6overSRB_Agg, aes(x=OvershadowSRB, y=ErrorRate,color = ResponseType))+
+#     geom_line(aes(group = ResponseType, linetype = ResponseType),size = 1,stat = "summary", fun = "mean",)+
+#     geom_point(stat = "summary", fun = "mean", aes(shape = ResponseType))+
+#   scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(0,0.15))+
+#   theme_classic()+ylab("Error Rate")+ggtitle("Interaction of Validity and Saliency for binding trials, Error Rate")
+# srber
+
+
+```
+
+#### 3. Inverse Efficiency scores
+
+```{r anova4, echo=FALSE, message=FALSE, warning=FALSE}
+Exp6overSRB_Agg$IES <- Exp6overSRB_Agg$RT_io/(1-Exp6overSRB_Agg$ErrorRate)
+
+anova_t_srbIES <- ezANOVA(data = Exp6overSRB_Agg,
+                          dv = IES,
+                          wid = .(participant),
+                          within = .(OvershadowSRB,ResponseType),
+                          detailed = TRUE)
+
+panderOptions('table.split.table',300)
+pander(anova_t_srbIES, style = 'rmarkdown', caption = "ANOVA results of binding trials: using IES", split.table = "Inf", missing = NA)
+
+iesbinding <- ggplot(Exp6overSRB_Agg, aes(x=ResponseType, y=IES,color = OvershadowSRB))+
+    geom_line(aes(group = OvershadowSRB, linetype = OvershadowSRB),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = OvershadowSRB))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(550,650))+
+  theme_classic()+ylab("IES (in ms)")+ggtitle("Interaction of Validity and Saliency for binding trials")
+iesbinding
+```
+
+
+### 2. Previous Occurrence Distance
+
+The distance of the last occurrence is computed as a new variable. It can range from 1, where the last occurrence was the immediate preceding on up until 20 where the last occurrence of that stimulus was 20 trials ago
+
+```{r prevocc, echo=FALSE, message=FALSE, warning=FALSE}
+
+###first is to find out the trials where the previous occurence wa the immediate previous one
+Exp6data$Distance <- NA
+Exp6data <- Exp6data%>%select(Distance,ACC_trials,everything())
+Exp6data <- Exp6data%>%
+  mutate(Distance = ifelse((lag(Condition,1)=="test" | lag(Condition,1) == "learn")& 
+              (lag(SalD,1)== SalD|lag(NSalD,1)==NSalD) &
+                            lag(participant,1)==participant &
+                            lag(ACC_trials,1)== 1, 1, Distance))
+
+#The number of immediate previous occurences
+pander(table(Exp6data$Distance), style = 'rmarkdown', caption = "Table showing the number of immediate previous occurence")
+
+## Now to look at other distances of the last occurrence beyond the immediately preceding one
+lagvalue <- 2:20
+
+for(j in lagvalue){
+  Exp6data <- Exp6data %>% 
+    mutate(Distance = ifelse((lag(Condition,j)=="learn"|lag(Condition,j)=="test") &                     (lag(SalD,j)==SalD|lag(NSalD,j)==NSalD) & lag(participant,j)==participant & lag(ACC_trials,j)== 1 & is.na(Distance)==TRUE, j, Distance))
+}
+
+pander(table(Exp6data$Distance), style = 'rmarkdown', caption = "Table showing the number of total previous occurences and how far each of them are")
+```
+
+#### Removing only immediate previous occurences
+
+To check if these immediate previous occurrences influence the overall validity effect a dateframe filtering out the Distance == 1 is created and analysed
+
+The validity effect is reduced from p < .001 to p = 0.07
+
+
+
+```{r srb, echo=FALSE, message=FALSE, warning=FALSE}
+Exp6data_woSRB <- Exp6data %>%
+  filter(Distance != 1)
+
+Exp6agg_woSRB <- aggregate(data = Exp6data_woSRB, RT_io~participant+Validity+Saliency, subset = (Condition == "test"), mean)
+
+##ANOVA
+anova_woSRB <- ezANOVA(data = Exp6agg_woSRB,
+                       dv = RT_io,
+                       wid = .(participant),
+                       within = .(Saliency,Validity),
+                       detailed = TRUE)
+pander(anova_woSRB, style = "rmarkdown", caption = "ANOVA after binding trials are removed")
+
+anova_out(anova_woSRB)
+woSRBinter <-  ggplot(Exp6agg_woSRB, aes(x=Saliency, y=RT_io,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(500,600))+
+  theme_classic()+ylab("ReactionTime (in ms)")+ggtitle("Interaction of Validity and Saliency without binding trials")
+woSRBinter
+ggsave(filename = here("Figures", "dist1inter.png"),woSRBinter)
+  mean_valEffect_woSRB <- ezStats(data = Exp6agg_woSRB,
+        dv = RT_io,
+        wid = participant,
+        within_full = .(Saliency,Validity),
+        within = .(Saliency),
+        diff=.(Validity),
+        reverse_diff = TRUE)
+
+pander(mean_valEffect_woSRB, style = "rmarkdown", title = "Validity effect(invalid-valid) for salient and non salient test trials(after controlling for binding trials)")
+```
+
+How strong are these effects?
+
+```{r valsrb, echo=FALSE, message=FALSE, warning=FALSE}
+
+pander(t.test(data = Exp6agg_woSRB, RT_io~Validity, subset = (Saliency == "Salient"), paired = TRUE), style = "rmarkdown", caption = "t test for validity effect for salient trials")
+
+pander(t.test(data = Exp6agg_woSRB, RT_io~Validity, subset = (Saliency == "NonSalient"), paired = TRUE), style = "rmarkdown", caption = "t test for validity effect for salient trials")
+
+woSRBValeffectplot <- ggplot(mean_valEffect_woSRB, aes(x=Saliency, y=Mean,fill = Saliency))+
+    geom_bar(stat = "identity")+
+  scale_fill_manual(values = c("cadetblue3","deepskyblue4"))+coord_cartesian(ylim = c(0,15))+
+  theme_classic()+ylab("Validity effect (invalid - valid trials) in ms")+ggtitle("Difference between invalid and valid trials")
+woSRBValeffectplot
+ggsave(filename = here("Figures","woSRBValeffectplot_o.png"),woSRBValeffectplot,width = 6, height = 4)
+```
+
+
+### Multi level modelling for last occurence distance
+
+```{r}
+
+Exp6agg_Distance <- aggregate(data = Exp6data, RT_io~Validity+Saliency+participant+Distance+ResponseType,subset = (Condition == "test"), mean)
+
+interceptOnly <- gls(RT_io~1, 
+                     data=Exp6agg_Distance,
+                     method = "ML",
+                     na.action= "na.omit")
+
+summary(interceptOnly)
+
+##Now Adding the within-participant factor
+randomIntercept<-lmer(RT_io~1 + (1|participant), 
+             data=Exp6agg_Distance, 
+             REML=F,
+             na.action = "na.omit")
+summary(randomIntercept)
+
+#Level 1predictor: Validity - valid vs invalid, within participants
+
+randomIntercept_p1<-lmer(RT_io~1+Validity + (1+Validity|participant), 
+                         data=Exp6agg_Distance, 
+                         REML=F,
+                         na.action = "na.omit")
+
+summary(randomIntercept_p1)
+anova(randomIntercept_p1)
+
+#add saliency as level 1 predictor to model ####
+randomIntercept_p2<-lmer(RT_io~1+Saliency + Validity + (1+Saliency + Validity|participant), 
+                         data=Exp6agg_Distance, 
+                         REML=F,
+                         na.action = "na.omit")
+summary(randomIntercept_p2)
+anova(randomIntercept_p2)
+
+
+##Adding previous response as a level 1 predictor
+randomIntercept_p3<-lmer(RT_io~1+Saliency + Validity + ResponseType + (1+Saliency + Validity+ResponseType|participant), 
+                         data=Exp6agg_Distance, 
+                         REML=F,
+                         na.action = "na.omit")
+summary(randomIntercept_p3)
+anova(randomIntercept_p3)
+
+## adding interaction
+  randomIntercept_p4<-lmer(RT_io~ 1+Saliency*Validity*ResponseType+ (1+Validity*Saliency*ResponseType|participant), 
+                           data=Exp6agg_Distance, 
+                           REML=F,
+                           na.action = "na.omit")
+  
+  summary(randomIntercept_p4)
+  anova(randomIntercept_p4)
+  
+## adding distance as a factor
+  
+
+```
+
