@@ -120,27 +120,7 @@ pander(summary(Exp6data$RT_ifo), style = 'rmarkdown', caption = "Summary of RT a
 pander(summary(Exp6data$RT_io), style = 'rmarkdown', caption = "Summary of RT after removing Outliers")
 
 ```
-## Computing BIS
 
-```{r}
-Exp6data$AccuracyRate <- 1-Exp6data$ErrorRate
-BIS <- function(x) {
-  n <- length(x$group)    # sample size to correct var()-function result (which uses n-1)
-  srt <- sqrt( ((n-1)/n) * var(x$RT_Trials) )     # sample standard deviation across all rts
-  spc <- sqrt( ((n-1)/n) * var(x$AccuracyRate) )            # sample standard deviation across all rts
-  mrt <- mean(x$RT_Trials)                        # mean across all rts
-  mpc <- mean(x$AccuracyRate)                               # mean across all pcs
-  zrt <- (x$RT_Trials)/srt                    # standardized rts
-  zpc <- (x$AccuracyRate-mpc)/spc                           # z-standardized pcs
-  x$bis <- zpc - zrt                              # Balanced Integration Score
-  
-  return(x)                                       # return x.frame with added variable 'bis'
-}
-
-
-Exp6data <-  BIS(Exp6data)
-
-```
 
 ## ANALYSES
 
@@ -382,7 +362,7 @@ errorrateplot <-  ggplot(Exp6agg_ER, aes(x=Saliency, y=ErrorRate,color = Validit
 Exp6test <- Exp6data %>%
   subset(Condition == "test")
 
-Exp6agg_IES <- aggregate(Exp6test[,c("RT_ifo","ErrorRate")], by = list(participant = Exp6test$participant,
+Exp6agg_IES <- aggregate(Exp6test[,c("RT_ifo","ErrorRate", "ACC_trials")], by = list(participant = Exp6test$participant,
                                                                        Validity = Exp6test$Validity,
                                                                        Saliency = Exp6test$Saliency), mean,na.rm = TRUE)
 
@@ -390,7 +370,7 @@ Exp6agg_IES$IES <- Exp6agg_IES$RT_ifo/(1-Exp6agg_IES$ErrorRate)
 Exp6agg_IES$ZRT <- scale(Exp6agg_IES$RT_ifo)
 Exp6agg_IES$PC <- 1-Exp6agg_IES$ErrorRate
 Exp6agg_IES$ZPC <- scale(Exp6agg_IES$PC)
-Exp6agg_IES$BIS <- Exp6agg_IES$PC - Exp6agg_IES$ZRT
+Exp6agg_IES$BIS <- Exp6agg_IES$ZPC - Exp6agg_IES$ZRT
 
 anova_t_IES <- ezANOVA(data = Exp6agg_IES,
         dv = IES,
@@ -430,7 +410,7 @@ ggplot(data = meanIES, aes(x = Saliency, y = Mean, fill = Saliency))+scale_fill_
   ylab("Validity Effect(in ms)")+theme(legend.title = element_blank())+
   ggtitle("Validity Effect (invalid - valid) across test trials (IES) averaged across participant")
 
-## with BIS
+##with BIS
 
 anova_t_BIS <- ezANOVA(data = Exp6agg_IES,
         dv = BIS,
@@ -450,12 +430,16 @@ ezPlot(data = Exp6agg_IES,
 
 ###FOR OUTLIERS
 
-Exp6agg_IES_o <- aggregate(Exp6test[,c("RT_io","ErrorRate")], by = list(participant = Exp6test$participant,
+Exp6agg_IES_o <- aggregate(Exp6test[,c("RT_io","ErrorRate","ACC_trials")], by = list(participant = Exp6test$participant,
                                                                        Validity = Exp6test$Validity,
                                                                        Saliency = Exp6test$Saliency), mean,na.rm = TRUE)
 
 Exp6agg_IES_o$IES <- Exp6agg_IES_o$RT_io/(1-Exp6agg_IES_o$ErrorRate)
+Exp6agg_IES_o$ZRT <- scale(Exp6agg_IES_o$RT_io)
+Exp6agg_IES_o$ZPC <- scale(Exp6agg_IES_o$ACC_trials)
+Exp6agg_IES_o$BIS <- Exp6agg_IES_o$ZPC - Exp6agg_IES_o$ZRT
 
+##with IES
 anova_t_IES_o <- ezANOVA(data = Exp6agg_IES_o,
         dv = IES,
         wid = participant,
@@ -477,6 +461,7 @@ IESinterplot_o <- ggplot(Exp6agg_IES_o, aes(x=Saliency, y=IES,color = Validity))
     geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
   scale_color_manual(values = c("deepskyblue4","cadetblue3"))+ylim(550,650)+
   theme_classic()+ylab("IES (in ms)")+ggtitle("Interaction of Validity and Saliency")
+IESinterplot_o
 #ggsave(filename = here("Figures","IESinterplot_o.png"),IESinterplot_o)
 
 meanIES_o <- ezStats(data = Exp6agg_IES,
@@ -496,6 +481,33 @@ valeffectIES_o <- ggplot(data = meanIES_o, aes(x = Saliency, y = Mean, fill = Sa
   ggtitle("Validity Effect (invalid - valid) across test trials (IES) averaged across participant")
 valeffectIES_o
 #ggsave(filename = here("Figures","valEffectwithIES_o.png"),valeffectIES_o)
+
+##with BIS
+anova_t_BIS_o <- ezANOVA(data = Exp6agg_IES_o,
+        dv = BIS,
+        wid = participant,
+        within = .(Saliency,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_BIS_o, style = 'rmarkdown', caption = "ANOVA results: using BIS(outliers)", split.table = "Inf", missing = NA)
+
+anova_out(anova_t_IES_o)
+ezPlot(data = Exp6agg_IES_o,
+        dv = BIS,
+        wid = participant,
+        within = .(Saliency,Validity),
+       split = Validity, x = Saliency, do_bars = FALSE)+theme_classic()+
+  ggtitle("Interaction effect with IES plotted on the y axis")
+
+BISinterplot_o <- ggplot(Exp6agg_IES_o, aes(x=Saliency, y=BIS,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+
+  theme_classic()+ylab("BIS (z score difference)")+ggtitle("Interaction of Validity and Saliency")
+BISinterplot_o
+#ggsave(filename = here("Figures","BISinterplot_o.png"),BISinterplot_o)
+
+
 ```
 
 Now while computing just the validity effect for each and checking if they are significant 
@@ -528,7 +540,7 @@ table(Exp6agg_B_fo$BlockCount,Exp6agg_B_fo$Validity,Exp6agg_B_fo$Saliency)
 table(Exp6agg_B_fo$BlockMain,Exp6agg_B_fo$Validity,Exp6agg_B_fo$Saliency)
 
 aov_b1_fo <- aov(RT_ifo~(Validity*Saliency*BlockMain)+Error(participant/(Validity*Saliency*BlockMain)), data = Exp6agg_B_fo)
-summary(aov_b_fo)
+summary(aov_b1_fo)
 
 ##EzANOVa not working because of unbalanced data
 anova_t_block1 <- ezANOVA(data = Exp6agg_B1,
@@ -764,8 +776,7 @@ pander(anova_ER_SRB, style = 'rmarkdown', caption = "ANOVA results: using IES", 
 ezPlot(data = Exp6overSRB_Agg,
         dv = RT_ifo,
         wid = participant,
-        within = .(OvershadowSRB,ResponseType),do_bars = FALSE,x=ResponseType,split = OvershadowSRB)
-       +theme_classic()+ylim(550,600)
+        within = .(OvershadowSRB,ResponseType),do_bars = FALSE,x=ResponseType,split = OvershadowSRB) +theme_classic()+ylim(550,600)
 
 t.test(data =Exp6overSRB_Agg, RT_io~ResponseType, subset = (OvershadowSRB == 1),paired = TRUE)
 

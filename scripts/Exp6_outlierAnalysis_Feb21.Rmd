@@ -292,11 +292,16 @@ Exp6test <- Exp6data %>%
 
 ###FOR OUTLIERS
 
-Exp6agg_IES_o <- aggregate(Exp6test[,c("RT_io","ErrorRate")], by = list(participant = Exp6test$participant,
+Exp6agg_IES_o <- aggregate(Exp6test[,c("RT_io","ErrorRate","ACC_trials")], by = list(participant = Exp6test$participant,
                                                                        Validity = Exp6test$Validity,
                                                                        Saliency = Exp6test$Saliency), mean,na.rm = TRUE)
 
 Exp6agg_IES_o$IES <- Exp6agg_IES_o$RT_io/(1-Exp6agg_IES_o$ErrorRate)
+Exp6agg_IES_o$ZRT <- scale(Exp6agg_IES_o$RT_io)
+Exp6agg_IES_o$ZPC <- scale(Exp6agg_IES_o$ACC_trials)
+Exp6agg_IES_o$BIS <- Exp6agg_IES_o$ZPC - Exp6agg_IES_o$ZRT
+
+
 
 anova_t_IES_o <- ezANOVA(data = Exp6agg_IES_o,
         dv = IES,
@@ -319,7 +324,7 @@ IESinterplot_o <- ggplot(Exp6agg_IES_o, aes(x=Saliency, y=IES,color = Validity))
   scale_color_manual(values = c("deepskyblue4","cadetblue3"))+coord_cartesian(ylim = c(550,650))+
   theme_classic()+ylab("IES (in ms)")+ggtitle("Interaction of Validity and Saliency")
 IESinterplot_o
-ggsave(filename = here("Figures","IESinterplot_o.png"),IESinterplot_o)
+#ggsave(filename = here("Figures","IESinterplot_o.png"),IESinterplot_o)
 
 meanIES_o <- ezStats(data = Exp6agg_IES_o,
         dv = IES,
@@ -337,7 +342,7 @@ valeffectIES_o <- ggplot(data = meanIES_o, aes(x = Saliency, y = Mean, fill = Sa
   ylab("Validity Effect(invalid-valid trials) in ms")+theme(legend.title = element_blank())+
   ggtitle("Validity Effect (invalid - valid) across test trials (IES) averaged across participant")
 valeffectIES_o
-ggsave(filename = here("Figures","valEffectwithIES_o.png"),valeffectIES_o)
+#ggsave(filename = here("Figures","valEffectwithIES_o.png"),valeffectIES_o)
 ```
 
 Are these validity effects significant?
@@ -350,6 +355,35 @@ pander(t.test(data = Exp6agg_IES_o, IES~Validity, subset = (Saliency == "Salient
 
 pander(t.test(data = Exp6agg_IES_o, IES~Validity, subset = (Saliency == "NonSalient"), paired = TRUE), style = "rmarkdown", caption = "OUtlier:t. test result of validity effect for nonsalient trials")
 ```
+### 5b. Balance Integration Score
+```{r}
+##with BIS
+anova_t_BIS_o <- ezANOVA(data = Exp6agg_IES_o,
+        dv = BIS,
+        wid = participant,
+        within = .(Saliency,Validity),
+        detailed = TRUE)
+panderOptions('table.split.table',300)
+pander(anova_t_BIS_o, style = 'rmarkdown', caption = "ANOVA results: using BIS(outliers)", split.table = "Inf", missing = NA)
+
+anova_out(anova_t_IES_o)
+ezPlot(data = Exp6agg_IES_o,
+        dv = BIS,
+        wid = participant,
+        within = .(Saliency,Validity),
+       split = Validity, x = Saliency, do_bars = FALSE)+theme_classic()+
+  ggtitle("Interaction effect with IES plotted on the y axis")
+
+BISinterplot_o <- ggplot(Exp6agg_IES_o, aes(x=Saliency, y=BIS,color = Validity))+
+    geom_line(aes(group = Validity, linetype = Validity),size = 1,stat = "summary", fun = "mean",)+
+    geom_point(stat = "summary", fun = "mean", aes(shape = Validity))+
+  scale_color_manual(values = c("deepskyblue4","cadetblue3"))+
+  theme_classic()+ylab("BIS (z score difference)")+ggtitle("Interaction of Validity and Saliency")
+BISinterplot_o
+#ggsave(filename = here("Figures","BISinterplot_o.png"),BISinterplot_o)
+
+```
+
 ### 6. Block Analysis
 
 The experimental trials were split into 4 blocks, further joined to have two main blocks and the data was analysed to check if the interaction differed across block.
@@ -480,15 +514,15 @@ Exp6overSRB_Agg_tv <- Exp6overSRB_Agg %>%
 Exp6overSRB_Agg_tiv <- Exp6overSRB_Agg %>%
   filter(Validity == "invalid")
 
-#ezANOVA does not work and only works when responseType is removed from the aggregate df 
-anova_t_SRB<- ezANOVA(data = Exp6overSRB_Agg,
-        dv = RT_io,
-        wid = participant,
-        within = .(OvershadowSRB,ResponseType),
-        detailed = TRUE)
-panderOptions('table.split.table',300)
-pander(anova_t_SRB, style = 'rmarkdown', caption = "ANOVA results: using IES", split.table = "Inf", missing = NA)
-anova_out(anova_t_SRB)
+# #ezANOVA does not work and only works when responseType is removed from the aggregate df 
+# anova_t_SRB<- ezANOVA(data = Exp6overSRB_Agg,
+#         dv = RT_io,
+#         wid = participant,
+#         within = .(OvershadowSRB,ResponseType),
+#         detailed = TRUE)
+# panderOptions('table.split.table',300)
+# pander(anova_t_SRB, style = 'rmarkdown', caption = "ANOVA results: using IES", split.table = "Inf", missing = NA)
+# anova_out(anova_t_SRB)
 
 
 
@@ -573,14 +607,14 @@ pander(anova_ER_SRB, style = 'rmarkdown', caption = "ANOVA results: using ErrorR
 ```{r anova4, echo=FALSE, message=FALSE, warning=FALSE}
 Exp6overSRB_Agg$IES <- Exp6overSRB_Agg$RT_io/(1-Exp6overSRB_Agg$ErrorRate)
 
-anova_t_srbIES <- ezANOVA(data = Exp6overSRB_Agg,
-                          dv = IES,
-                          wid = .(participant),
-                          within = .(OvershadowSRB,ResponseType),
-                          detailed = TRUE)
-
-panderOptions('table.split.table',300)
-pander(anova_t_srbIES, style = 'rmarkdown', caption = "ANOVA results of binding trials: using IES", split.table = "Inf", missing = NA)
+# anova_t_srbIES <- ezANOVA(data = Exp6overSRB_Agg,
+#                           dv = IES,
+#                           wid = .(participant),
+#                           within = .(OvershadowSRB,ResponseType),
+#                           detailed = TRUE)
+# 
+# panderOptions('table.split.table',300)
+# pander(anova_t_srbIES, style = 'rmarkdown', caption = "ANOVA results of binding trials: using IES", split.table = "Inf", missing = NA)
 
 iesbinding <- ggplot(Exp6overSRB_Agg, aes(x=ResponseType, y=IES,color = OvershadowSRB))+
     geom_line(aes(group = OvershadowSRB, linetype = OvershadowSRB),size = 1,stat = "summary", fun = "mean",)+
@@ -682,58 +716,58 @@ ggsave(filename = here("Figures","woSRBValeffectplot_o.png"),woSRBValeffectplot,
 
 ```{r}
 
-Exp6agg_Distance <- aggregate(data = Exp6data, RT_io~Validity+Saliency+participant+Distance+ResponseType,subset = (Condition == "test"), mean)
-
-interceptOnly <- gls(RT_io~1, 
-                     data=Exp6agg_Distance,
-                     method = "ML",
-                     na.action= "na.omit")
-
-summary(interceptOnly)
-
-##Now Adding the within-participant factor
-randomIntercept<-lmer(RT_io~1 + (1|participant), 
-             data=Exp6agg_Distance, 
-             REML=F,
-             na.action = "na.omit")
-summary(randomIntercept)
-
-#Level 1predictor: Validity - valid vs invalid, within participants
-
-randomIntercept_p1<-lmer(RT_io~1+Validity + (1+Validity|participant), 
-                         data=Exp6agg_Distance, 
-                         REML=F,
-                         na.action = "na.omit")
-
-summary(randomIntercept_p1)
-anova(randomIntercept_p1)
-
-#add saliency as level 1 predictor to model ####
-randomIntercept_p2<-lmer(RT_io~1+Saliency + Validity + (1+Saliency + Validity|participant), 
-                         data=Exp6agg_Distance, 
-                         REML=F,
-                         na.action = "na.omit")
-summary(randomIntercept_p2)
-anova(randomIntercept_p2)
-
-
-##Adding previous response as a level 1 predictor
-randomIntercept_p3<-lmer(RT_io~1+Saliency + Validity + ResponseType + (1+Saliency + Validity+ResponseType|participant), 
-                         data=Exp6agg_Distance, 
-                         REML=F,
-                         na.action = "na.omit")
-summary(randomIntercept_p3)
-anova(randomIntercept_p3)
-
-## adding interaction
-  randomIntercept_p4<-lmer(RT_io~ 1+Saliency*Validity*ResponseType+ (1+Validity*Saliency*ResponseType|participant), 
-                           data=Exp6agg_Distance, 
-                           REML=F,
-                           na.action = "na.omit")
-  
-  summary(randomIntercept_p4)
-  anova(randomIntercept_p4)
-  
+# Exp6agg_Distance <- aggregate(data = Exp6data, RT_io~Validity+Saliency+participant+Distance+ResponseType,subset = (Condition == "test"), mean)
+# 
+# interceptOnly <- gls(RT_io~1, 
+#                      data=Exp6agg_Distance,
+#                      method = "ML",
+#                      na.action= "na.omit")
+# 
+# summary(interceptOnly)
+# 
+# ##Now Adding the within-participant factor
+# randomIntercept<-lmer(RT_io~1 + (1|participant), 
+#              data=Exp6agg_Distance, 
+#              REML=F,
+#              na.action = "na.omit")
+# summary(randomIntercept)
+# 
+# #Level 1predictor: Validity - valid vs invalid, within participants
+# 
+# randomIntercept_p1<-lmer(RT_io~1+Validity + (1+Validity|participant), 
+#                          data=Exp6agg_Distance, 
+#                          REML=F,
+#                          na.action = "na.omit")
+# 
+# summary(randomIntercept_p1)
+# anova(randomIntercept_p1)
+# 
+# #add saliency as level 1 predictor to model ####
+# randomIntercept_p2<-lmer(RT_io~1+Saliency + Validity + (1+Saliency + Validity|participant), 
+#                          data=Exp6agg_Distance, 
+#                          REML=F,
+#                          na.action = "na.omit")
+# summary(randomIntercept_p2)
+# anova(randomIntercept_p2)
+# 
+# 
+# ##Adding previous response as a level 1 predictor
+# randomIntercept_p3<-lmer(RT_io~1+Saliency + Validity + ResponseType + (1+Saliency + Validity+ResponseType|participant), 
+#                          data=Exp6agg_Distance, 
+#                          REML=F,
+#                          na.action = "na.omit")
+# summary(randomIntercept_p3)
+# anova(randomIntercept_p3)
+# 
+# ## adding interaction
+#   randomIntercept_p4<-lmer(RT_io~ 1+Saliency*Validity*ResponseType+ (1+Validity*Saliency*ResponseType|participant), 
+#                            data=Exp6agg_Distance, 
+#                            REML=F,
+#                            na.action = "na.omit")
+#   
+#   summary(randomIntercept_p4)
+#   anova(randomIntercept_p4)
+#   
 ## adding distance as a factor
   
 
